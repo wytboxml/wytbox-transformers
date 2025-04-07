@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import unittest
 
-from attention import _check_attention_dims, SoftmaxAttention
+from attention import _check_attention_dims, SoftmaxAttention, MHSA, MHCA
 
 
 class TestAttentionMechanism(unittest.TestCase):
@@ -143,5 +143,95 @@ class TestAttentionMechanism(unittest.TestCase):
         self.assertTrue(torch.allclose(output, v, atol=1e-4))
 
 
+class TestMultiHeadAttention(unittest.TestCase):
+    
+    def setUp(self):
+        self.batch_size = 2
+        self.seq_len = 10
+        self.dim = 64
+        self.heads = 4
+        
+        # Fix random seed for reproducibility
+        torch.manual_seed(42)
+        
+        # Create test inputs
+        self.x = torch.randn(self.batch_size, self.seq_len, self.dim)
+        self.z = torch.randn(self.batch_size, self.seq_len * 2, self.dim)  # Different sequence length
+        
+    def test_mhsa_forward_shape(self):
+        """Test MHSA forward pass output shapes."""
+        mhsa = MHSA(dim=self.dim, heads=self.heads)
+        output = mhsa(self.x)
+        
+        # Output should have same shape as input
+        self.assertEqual(output.shape, self.x.shape)
+        
+        # Test with return_attn=True
+        output, attn = mhsa(self.x, return_attn=True)
+        self.assertEqual(output.shape, self.x.shape)
+        self.assertEqual(attn.shape, (self.batch_size, self.heads, self.seq_len, self.seq_len))
+        
+    def test_mhxa_forward_shape(self):
+        """Test MHXA forward pass output shapes."""
+        mhca = MHCA(dim=self.dim, heads=self.heads)
+        output = mhca(self.x, self.z)
+        
+        # Output should have same shape as query input except for feature dimension
+        self.assertEqual(output.shape, self.x.shape)
+        
+        # Test with return_attn=True
+        output, attn = mhca(self.x, self.z, return_attn=True)
+        self.assertEqual(output.shape, self.x.shape)
+        self.assertEqual(attn.shape, (self.batch_size, self.heads, self.seq_len, self.seq_len * 2))
+        
+    def test_mhsa_equivalence(self):
+        """Test that MHSA is equivalent to MHXA when using same input for query and key/value."""
+        torch.manual_seed(42)  # Ensure deterministic initialization
+        mhsa = MHSA(dim=self.dim, heads=self.heads)
+        
+        torch.manual_seed(42)  # Same initialization for fair comparison
+        mhca = MHCA(dim=self.dim, heads=self.heads)
+        
+        # Replace MHCA's projections to match MHSA's combined projection
+        # This is a hack for testing equivalence - in practice the weights would be trained differently
+        with torch.no_grad():
+            # Extract weights and biases from MHSA's qkv projection
+            qkv_weight = mhsa.qkv_projection.weight
+            qkv_bias = mhsa.qkv_projection.bias
+            
+            # Match projections in MHCA and MHSA
+            mhca.q_projection.weight.copy_(qkv_weight[:self.dim])
+            mhca.q_projection.bias.copy_(qkv_bias[:self.dim])
+            mhca.kv_projection.weight.copy_(qkv_weight[self.dim:])
+            mhca.kv_projection.bias.copy_(qkv_bias[self.dim:])
+            mhca.out_projection.weight.copy_(mhsa.out_projection.weight)
+            mhca.out_projection.bias.copy_(mhsa.out_projection.bias)
+        
+        # With identical weights, outputs should be the same when input is the same
+        with torch.no_grad():
+            output_mhsa = mhsa(self.x)
+            output_mhca = mhca(self.x, self.x)
+        
+        self.assertTrue(torch.allclose(output_mhsa, output_mhca, atol=1e-5))
+        
+    def test_batched(self):
+        """Test MHSA and MHCA with additional batch dimensions."""
+        # Create input with extra batch dimension
+        # Shape: (extra_batch, batch_size, seq_len, dim)
+        extra_batch = 3
+        x_batched = torch.randn(extra_batch, self.batch_size, self.seq_len, self.dim)
+        z_batched = torch.randn(extra_batch, self.batch_size, 12, self.dim)
+        
+        mhsa = MHSA(dim=self.dim, heads=self.heads)
+        output_mhsa = mhsa(x_batched)
+        
+        mhca = MHCA(dim=self.dim, heads=self.heads)
+        output_mhca = mhca(x_batched, z_batched)
+        
+        # Output should preserve all input dimensions
+        self.assertEqual(output_mhsa.shape, x_batched.shape)
+        self.assertEqual(output_mhca.shape, x_batched.shape)
+        
+        
 if __name__ == '__main__':
     unittest.main()

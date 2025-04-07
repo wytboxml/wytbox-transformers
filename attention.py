@@ -114,3 +114,162 @@ class SoftmaxAttention(nn.Module):
         if return_attn:
             return out, attn
         return out
+
+class MHSA(nn.Module):
+    """
+    Multi-Head Self-Attention module as described in "Attention Is All You Need" (Vaswani et al., 2017).
+    
+    Implements the self-attention mechanism where queries, keys, and values are all 
+    projections of the same input sequence. It first projects the input into queries, keys, and values, 
+    splits them into multiple heads, applies scaled dot-product attention in parallel, and then 
+    recombines the outputs with a final projection.
+    
+    Usage example:
+        >>> # Multi-head self-attention with 8 heads, batch size 32, sequence length 10, dimension 64
+        >>> x = torch.randn(32, 10, 64)
+        >>> mhsa = MHSA(dim=64, heads=8)
+        >>> output = mhsa(x)  # Shape: (32, 10, 64)
+    """
+    def __init__(self, dim: int, heads: int=8, scale: float=None, out_drop:float = 0., attn_drop: float=0.):
+        """
+        Initialize the MHSA (Multi-Head Self-Attention) module.
+        
+        Args:
+            dim (int): Input and output dimension.
+            heads (int, default=8): Number of attention heads.
+            scale (float, optional): Custom scaling factor for attention scores.
+                If None, uses 1/sqrt(d_k) as in the original paper.
+            out_drop (float, default=0.): Dropout rate applied to the output.
+            attn_drop (float, default=0.): Dropout rate applied to attention scores.
+        """
+        super().__init__()
+        self.dim = dim
+        self.heads = heads
+        self.qkv_projection = nn.Linear(dim, dim*3)
+        self.out_projection = nn.Linear(dim, dim)
+        self.attention = SoftmaxAttention(scale=scale, drop=attn_drop)
+        self.dropout = nn.Dropout(out_drop)
+    
+    def forward(self, 
+                x: torch.Tensor, 
+                return_attn: bool=False
+            ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Compute multi-head self-attention.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (..., L, D) where L is the sequence length
+                and D is the embedding dimension.
+            return_attn (bool, default=False): If True, returns attention weights along with output.
+        
+        Returns:
+            torch.Tensor or Tuple[torch.Tensor, torch.Tensor]:
+                - If return_attn=False: Output tensor of shape (..., L, D)
+                - If return_attn=True: Tuple of (output, attention weights)
+                  where attention weights have shape (..., H, L, L) with H being the number of heads
+        """
+        H, L = self.heads, x.shape[-2]
+        
+        # Project into H query, key and value sequences
+        qkv = self.qkv_projection(x)
+        qkv = qkv.reshape(*x.shape[:-2], L, 3, H, -1)  # ... L 3 H D
+        q, k, v = qkv.transpose(-4, -2).unbind(-3)       # ... H L D  (3 tensors for q, k, v)
+
+        # Attention
+        out = self.attention(q, k, v, return_attn=return_attn)  # ... H L D
+        if return_attn:
+            out, attn = out
+
+        # Mix outputs from multiple heads
+        out = out.transpose(-3, -2).flatten(-2)
+        out = self.dropout(out)
+        out = self.out_projection(out)
+
+        if return_attn:
+            return out, attn
+        return out
+    
+
+class MHCA(nn.Module):
+    """
+    Multi-Head Cross-Attention module as described in "Attention Is All You Need" (Vaswani et al., 2017).
+    
+    This module implements the cross-attention mechanism where queries come from one sequence, 
+    while keys and values come from another sequence. It projects the inputs accordingly, splits 
+    them into multiple heads, applies scaled dot-product attention in parallel, and then recombines 
+    the outputs with a final projection.
+        
+    Usage example:
+        >>> # Multi-head cross-attention with 8 heads, batch size 32, sequence lengths 10 and 15
+        >>> x = torch.randn(32, 10, 64)  # Query sequence
+        >>> z = torch.randn(32, 15, 64)  # Key/value sequence
+        >>> mhca = MHCA(dim=64, heads=8)
+        >>> output = mhca(x, z)  # Shape: (32, 10, 64)
+    """
+    def __init__(self, dim: int, heads: int=8, scale: float=None, out_drop:float = 0., attn_drop: float=0.):
+        super().__init__()
+        """
+        Initialize the Multi-Head Cross-Attention module.
+        
+        Args:
+            dim (int): Input and output dimension.
+            heads (int, default=8): Number of attention heads.
+            scale (float, optional): Custom scaling factor for attention scores.
+                If None, uses 1/sqrt(d_k) as in the original paper.
+            out_drop (float, default=0.): Dropout rate applied to the output.
+            attn_drop (float, default=0.): Dropout rate applied to attention scores.
+        """
+        self.dim = dim
+        self.heads = heads
+        self.q_projection = nn.Linear(dim, dim)
+        self.kv_projection = nn.Linear(dim, 2*dim)
+        self.out_projection = nn.Linear(dim, dim)
+        self.attention = SoftmaxAttention(scale=scale, drop=attn_drop)
+        self.dropout = nn.Dropout(out_drop)
+    
+    def forward(self, 
+                x: torch.Tensor, 
+                z: torch.Tensor, 
+                return_attn: bool=False
+            ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Compute multi-head cross-attention.
+        
+        Args:
+            x (torch.Tensor): Query tensor of shape (..., Lx, D) where Lx is the query sequence length
+                and D is the embedding dimension.
+            z (torch.Tensor): Key/value tensor of shape (..., Lz, D) where Lz is the key/value sequence 
+                length and D is the embedding dimension.
+            return_attn (bool, default=False): If True, returns attention weights along with output.
+        
+        Returns:
+            torch.Tensor or Tuple[torch.Tensor, torch.Tensor]:
+                - If return_attn=False: Output tensor of shape (..., Lx, D)
+                - If return_attn=True: Tuple of (output tensor, attention weights tensor)
+                  where attention weights have shape (..., H, Lx, Lz) with H being the number of heads
+        """
+        H, Lx, Lz = self.heads, x.shape[-2], z.shape[-2]
+        
+        # Project into H query, key and value sequences
+        q = self.q_projection(x)
+        q = q.reshape(*x.shape[:-2], Lx, H, -1) # ... L H D
+        q = q.transpose(-3, -2)                 # ... H L D
+        
+        kv = self.kv_projection(z)
+        kv = kv.reshape(*z.shape[:-2], Lz, 2, H, -1)    # ... L 2 H D
+        k, v = kv.transpose(-4, -2).unbind(-3)           # ... H L D  (2 tensors: k, v)
+
+        # Attention
+        out = self.attention(q, k, v, return_attn=return_attn)  # ... H L D
+        if return_attn:
+            out, attn = out
+
+        # Mix outputs from multiple heads
+        out = out.transpose(-3, -2).flatten(-2)
+        out = self.dropout(out)
+        out = self.out_projection(out)
+
+        if return_attn:
+            return out, attn
+        return out
+        
