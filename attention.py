@@ -65,16 +65,18 @@ class SoftmaxAttention(nn.Module):
         >>> output = attention(q, k, v)  # Shape: (32, 8, 10, 64)
     """
     
-    def __init__(self, scale: float=None):
+    def __init__(self, scale: float=None, drop: float=0.):
         """
         Initialize the attention module.
         
         Args:
             scale (float, optional): Custom scaling factor for attention scores.
                 If None, uses 1/sqrt(d_k) as in the original paper.
+            drop (float, default=0.): Dropout rate applied to attention scores.
         """
         super().__init__()
         self.scale = scale
+        self.dropout = nn.Dropout(drop)
 
     def forward(
             self, 
@@ -88,14 +90,14 @@ class SoftmaxAttention(nn.Module):
         
         Args:
             q (torch.Tensor): Query tensor of shape (..., Lq, D)
-            k (torch.Tensor): Key tensor of shape (..., Lk, D)
-            v (torch.Tensor): Value tensor of shape (..., Lk, D_v)
+            k (torch.Tensor): Key tensor of shape   (..., Lk, D)
+            v (torch.Tensor): Value tensor of shape (..., Lk, Dv)
             return_attn (bool, optional): If True, returns attention weights along with output.
                 Default: False
         
         Returns:
             torch.Tensor or Tuple[torch.Tensor, torch.Tensor]: 
-                - If return_attn=False: Output tensor of shape (..., Lq, D_v)
+                - If return_attn=False: Output tensor of shape (..., Lq, Dv)
                 - If return_attn=True: Tuple of (output tensor, attention weights tensor)
                   where attention weights have shape (..., Lq, Lk)
         """
@@ -105,8 +107,10 @@ class SoftmaxAttention(nn.Module):
         if self.scale is None:
             self.scale = Datt ** (-0.5)
         
-        attn = F.softmax(q @ k.transpose(-2, -1) * self.scale, -1)
+        attn_scores = q @ k.transpose(-2, -1) * self.scale
+        attn = self.dropout(attn)
+        attn = F.softmax(attn, -1)
         out = attn @ v
         if return_attn:
-            return out, attn
+            return out, attn_scores
         return out
