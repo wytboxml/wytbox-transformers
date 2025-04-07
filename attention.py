@@ -107,10 +107,10 @@ class SoftmaxAttention(nn.Module):
         if self.scale is None:
             self.scale = Datt ** (-0.5)
         
-        attn_scores = q @ k.transpose(-2, -1) * self.scale
+        attn = q @ k.transpose(-2, -1) * self.scale
         attn = self.dropout(attn)
         attn = F.softmax(attn, -1)
         out = attn @ v
         if return_attn:
-            return out, attn_scores
+            return out, attn
         return out
