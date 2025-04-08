@@ -206,13 +206,14 @@ class MHCA(nn.Module):
         >>> mhca = MHCA(dim=64, heads=8)
         >>> output = mhca(x, z)  # Shape: (32, 10, 64)
     """
-    def __init__(self, dim: int, heads: int=8, scale: float=None, drop_out:float = 0., drop_attn: float=0.):
+    def __init__(self, dim: int, dim_cond: int, heads: int=8, scale: float=None, drop_out:float = 0., drop_attn: float=0.):
         super().__init__()
         """
         Initialize the Multi-Head Cross-Attention module.
         
         Args:
             dim (int): Input and output dimension.
+            dim_cond (int): Condition dimension.
             heads (int, default=8): Number of attention heads.
             scale (float, optional): Custom scaling factor for attention scores.
                 If None, uses 1/sqrt(d_k) as in the original paper.
@@ -222,7 +223,7 @@ class MHCA(nn.Module):
         self.dim = dim
         self.heads = heads
         self.q_projection = nn.Linear(dim, dim)
-        self.kv_projection = nn.Linear(dim, 2*dim)
+        self.kv_projection = nn.Linear(dim_cond, 2*dim)
         self.out_projection = nn.Linear(dim, dim)
         self.attention = SoftmaxAttention(scale=scale, drop=drop_attn)
         self.dropout = nn.Dropout(drop_out)

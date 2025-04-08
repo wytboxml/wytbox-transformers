@@ -172,9 +172,9 @@ class TestMultiHeadAttention(unittest.TestCase):
         self.assertEqual(output.shape, self.x.shape)
         self.assertEqual(attn.shape, (self.batch_size, self.heads, self.seq_len, self.seq_len))
         
-    def test_mhxa_forward_shape(self):
-        """Test MHXA forward pass output shapes."""
-        mhca = MHCA(dim=self.dim, heads=self.heads)
+    def test_mhca_forward_shape(self):
+        """Test MHCA forward pass output shapes."""
+        mhca = MHCA(dim=self.dim, heads=self.heads, dim_cond=self.dim)
         output = mhca(self.x, self.z)
         
         # Output should have same shape as query input except for feature dimension
@@ -191,7 +191,7 @@ class TestMultiHeadAttention(unittest.TestCase):
         mhsa = MHSA(dim=self.dim, heads=self.heads)
         
         torch.manual_seed(42)  # Same initialization for fair comparison
-        mhca = MHCA(dim=self.dim, heads=self.heads)
+        mhca = MHCA(dim=self.dim, heads=self.heads, dim_cond=self.dim)
         
         # Replace MHCA's projections to match MHSA's combined projection
         # This is a hack for testing equivalence - in practice the weights would be trained differently
@@ -226,7 +226,7 @@ class TestMultiHeadAttention(unittest.TestCase):
         mhsa = MHSA(dim=self.dim, heads=self.heads)
         output_mhsa = mhsa(x_batched)
         
-        mhca = MHCA(dim=self.dim, heads=self.heads)
+        mhca = MHCA(dim=self.dim, heads=self.heads, dim_cond=self.dim)
         output_mhca = mhca(x_batched, z_batched)
         
         # Output should preserve all input dimensions
