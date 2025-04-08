@@ -130,7 +130,7 @@ class MHSA(nn.Module):
         >>> mhsa = MHSA(dim=64, heads=8)
         >>> output = mhsa(x)  # Shape: (32, 10, 64)
     """
-    def __init__(self, dim: int, heads: int=8, scale: float=None, out_drop:float = 0., attn_drop: float=0.):
+    def __init__(self, dim: int, heads: int=8, scale: float=None, drop_out:float = 0., drop_attn: float=0.):
         """
         Initialize the MHSA (Multi-Head Self-Attention) module.
         
@@ -139,16 +139,16 @@ class MHSA(nn.Module):
             heads (int, default=8): Number of attention heads.
             scale (float, optional): Custom scaling factor for attention scores.
                 If None, uses 1/sqrt(d_k) as in the original paper.
-            out_drop (float, default=0.): Dropout rate applied to the output.
-            attn_drop (float, default=0.): Dropout rate applied to attention scores.
+            drop_out (float, default=0.): Dropout rate applied to the output.
+            drop_attn (float, default=0.): Dropout rate applied to attention scores.
         """
         super().__init__()
         self.dim = dim
         self.heads = heads
         self.qkv_projection = nn.Linear(dim, dim*3)
         self.out_projection = nn.Linear(dim, dim)
-        self.attention = SoftmaxAttention(scale=scale, drop=attn_drop)
-        self.dropout = nn.Dropout(out_drop)
+        self.attention = SoftmaxAttention(scale=scale, drop=drop_attn)
+        self.dropout = nn.Dropout(drop_out)
     
     def forward(self, 
                 x: torch.Tensor, 
@@ -206,7 +206,7 @@ class MHCA(nn.Module):
         >>> mhca = MHCA(dim=64, heads=8)
         >>> output = mhca(x, z)  # Shape: (32, 10, 64)
     """
-    def __init__(self, dim: int, heads: int=8, scale: float=None, out_drop:float = 0., attn_drop: float=0.):
+    def __init__(self, dim: int, heads: int=8, scale: float=None, drop_out:float = 0., drop_attn: float=0.):
         super().__init__()
         """
         Initialize the Multi-Head Cross-Attention module.
@@ -216,16 +216,16 @@ class MHCA(nn.Module):
             heads (int, default=8): Number of attention heads.
             scale (float, optional): Custom scaling factor for attention scores.
                 If None, uses 1/sqrt(d_k) as in the original paper.
-            out_drop (float, default=0.): Dropout rate applied to the output.
-            attn_drop (float, default=0.): Dropout rate applied to attention scores.
+            drop_out (float, default=0.): Dropout rate applied to the output.
+            drop_attn (float, default=0.): Dropout rate applied to attention scores.
         """
         self.dim = dim
         self.heads = heads
         self.q_projection = nn.Linear(dim, dim)
         self.kv_projection = nn.Linear(dim, 2*dim)
         self.out_projection = nn.Linear(dim, dim)
-        self.attention = SoftmaxAttention(scale=scale, drop=attn_drop)
-        self.dropout = nn.Dropout(out_drop)
+        self.attention = SoftmaxAttention(scale=scale, drop=drop_attn)
+        self.dropout = nn.Dropout(drop_out)
     
     def forward(self, 
                 x: torch.Tensor, 
@@ -257,7 +257,7 @@ class MHCA(nn.Module):
         
         kv = self.kv_projection(z)
         kv = kv.reshape(*z.shape[:-2], Lz, 2, H, -1)    # ... L 2 H D
-        k, v = kv.transpose(-4, -2).unbind(-3)           # ... H L D  (2 tensors: k, v)
+        k, v = kv.transpose(-4, -2).unbind(-3)          # ... H L D  (2 tensors: k, v)
 
         # Attention
         out = self.attention(q, k, v, return_attn=return_attn)  # ... H L D
