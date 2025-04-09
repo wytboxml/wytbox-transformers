@@ -43,11 +43,11 @@ class SoftmaxAttention(nn.Module):
     """
     Implementation of scaled dot-product attention as described in 
     "Attention Is All You Need" (Vaswani et al., 2017).
-    
-    This module computes attention scores between query and key tensors, and uses
-    these scores to create a weighted sum of value tensors. It supports any number
-    of batch dimensions, including configurations where attention heads are represented
-    as additional batch dimensions.
+        
+    Args:
+        scale (float, optional): Custom scaling factor for attention scores.
+            If None, uses 1/sqrt(d_k).
+        drop (float, default=0.): Dropout rate applied to attention scores.
 
     Usage examples:
         >>> # Single-head attention with batch size 32, sequence length 10, dimension 64
@@ -66,14 +66,6 @@ class SoftmaxAttention(nn.Module):
     """
     
     def __init__(self, scale: float=None, drop: float=0.):
-        """
-        Initialize the attention module.
-        
-        Args:
-            scale (float, optional): Custom scaling factor for attention scores.
-                If None, uses 1/sqrt(d_k) as in the original paper.
-            drop (float, default=0.): Dropout rate applied to attention scores.
-        """
         super().__init__()
         self.scale = scale
         self.dropout = nn.Dropout(drop)
@@ -83,7 +75,8 @@ class SoftmaxAttention(nn.Module):
             q: torch.Tensor, 
             k: torch.Tensor, 
             v: torch.Tensor, 
-            return_attn=False
+            mask: torch.Tensor=None, 
+            return_attn: bool=False
             ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Computes scaled dot-product attention.
@@ -92,8 +85,9 @@ class SoftmaxAttention(nn.Module):
             q (torch.Tensor): Query tensor of shape (..., Lq, D)
             k (torch.Tensor): Key tensor of shape   (..., Lk, D)
             v (torch.Tensor): Value tensor of shape (..., Lk, Dv)
-            return_attn (bool, optional): If True, returns attention weights along with output.
-                Default: False
+            mask (torch.Tensor, optional): Attention mask used for causal attention or padding  (..., Lq, Lk). 
+                Leading batch dimensions must match q, k inputs, or be singleton dimensions for broadcasting.
+            return_attn (bool, default=False): If True, returns attention weights along with output.
         
         Returns:
             torch.Tensor or Tuple[torch.Tensor, torch.Tensor]: 
@@ -102,13 +96,15 @@ class SoftmaxAttention(nn.Module):
                   where attention weights have shape (..., Lq, Lk)
         """
         _check_attention_dims(q, k, v)
-        Datt = q.shape[-1]
+        dim = q.shape[-1]
 
         if self.scale is None:
-            self.scale = Datt ** (-0.5)
+            self.scale = dim ** (-0.5)
         
         attn = q @ k.transpose(-2, -1) * self.scale
         attn = self.dropout(attn)
+        if mask is not None:
+            attn.masked_fill_(~mask.bool(), float('-inf'))
         attn = F.softmax(attn, -1)
         out = attn @ v
         if return_attn:
@@ -119,29 +115,24 @@ class MHSA(nn.Module):
     """
     Multi-Head Self-Attention module as described in "Attention Is All You Need" (Vaswani et al., 2017).
     
-    Implements the self-attention mechanism where queries, keys, and values are all 
-    projections of the same input sequence. It first projects the input into queries, keys, and values, 
-    splits them into multiple heads, applies scaled dot-product attention in parallel, and then 
-    recombines the outputs with a final projection.
+    Constructor Args:
+        dim (int): Input and output dimension.
+        heads (int, default=8): Number of attention heads.
+        scale (float, optional): Custom scaling factor for attention scores.
+            If None, uses 1/sqrt(d_k) as in the original paper.
+        drop_out (float, default=0.): Dropout rate applied to the output.
+        drop_attn (float, default=0.): Dropout rate applied to attention scores.
     
-    Usage example:
+    Example:
         >>> # Multi-head self-attention with 8 heads, batch size 32, sequence length 10, dimension 64
         >>> x = torch.randn(32, 10, 64)
         >>> mhsa = MHSA(dim=64, heads=8)
         >>> output = mhsa(x)  # Shape: (32, 10, 64)
     """
-    def __init__(self, dim: int, heads: int=8, scale: float=None, drop_out:float = 0., drop_attn: float=0.):
-        """
-        Initialize the MHSA (Multi-Head Self-Attention) module.
-        
-        Args:
-            dim (int): Input and output dimension.
-            heads (int, default=8): Number of attention heads.
-            scale (float, optional): Custom scaling factor for attention scores.
-                If None, uses 1/sqrt(d_k) as in the original paper.
-            drop_out (float, default=0.): Dropout rate applied to the output.
-            drop_attn (float, default=0.): Dropout rate applied to attention scores.
-        """
+    def __init__(
+            self, 
+            dim: int, 
+            heads: int=8, scale: float=None, drop_out:float = 0., drop_attn: float=0.):
         super().__init__()
         self.dim = dim
         self.heads = heads
@@ -152,6 +143,7 @@ class MHSA(nn.Module):
     
     def forward(self, 
                 x: torch.Tensor, 
+                mask: torch.Tensor=None, 
                 return_attn: bool=False
             ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -160,6 +152,8 @@ class MHSA(nn.Module):
         Args:
             x (torch.Tensor): Input tensor of shape (..., L, D) where L is the sequence length
                 and D is the embedding dimension.
+            mask (torch.Tensor, optional): Attention mask used for causal attention or padding  (..., Lq, Lk). 
+                Leading batch dimensions must match q, k inputs, or be singleton dimensions for broadcasting.
             return_attn (bool, default=False): If True, returns attention weights along with output.
         
         Returns:
@@ -176,7 +170,7 @@ class MHSA(nn.Module):
         q, k, v = qkv.transpose(-4, -2).unbind(-3)       # ... H L D  (3 tensors for q, k, v)
 
         # Attention
-        out = self.attention(q, k, v, return_attn=return_attn)  # ... H L D
+        out = self.attention(q, k, v, mask=mask, return_attn=return_attn)  # ... H L D
         if return_attn:
             out, attn = out
 

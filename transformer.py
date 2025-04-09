@@ -48,7 +48,8 @@ class TransformerBlock(nn.Module):
     def forward(
         self, 
         x: torch.Tensor, 
-        z: Optional[torch.Tensor] = None
+        z: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass through the transformer block.
@@ -58,11 +59,16 @@ class TransformerBlock(nn.Module):
             z (torch.Tensor, optional): Conditioning tensor for cross-attention
                 of shape [..., cond_seq_len, d_cond]. Leading "batch" dimensions 
                 should match input.
+            mask (torch.Tensor, optional): Optional mask to be applied to 
+                self-attention (eg, for padding or causal attention)
+                [..., seq_len, seq_len]. Leading "batch" dimensions 
+                should match input, or not exist if mask is to be applied to 
+                all samples.
                 
         Returns:
             torch.Tensor: Output tensor of same shape as input x
         """
-        x = x + self.self_attn(self.norm_sa(x))
+        x = x + self.self_attn(self.norm_sa(x), mask=mask)
         if z is not None:
             assert hasattr(self, 'cross_attn')
             x = x + self.cross_attn(self.norm_cx(x), self.norm_cz(z))
@@ -103,7 +109,11 @@ class TransformerEncoder(nn.Module):
         self.pos_embed = SinusoidalPEs(d_model)
 
         self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, heads, drop_attn=drop_attn, drop_ffn=drop_ffn)
+            TransformerBlock(
+                d_model, 
+                heads, 
+                drop_attn=drop_attn, 
+                drop_ffn=drop_ffn)
             for _ in range(depth)
         ])
 
@@ -198,11 +208,20 @@ class TransformerDecoder(nn.Module):
         """
         L = x_tkns.shape[-1]
         x = self.tkn_embed(x_tkns) + self.pos_embed(L)
-
+        mask = torch.tril(torch.ones((L, L)))
+        
         for blk in self.blocks:
-            x = blk(x, z)
+            x = blk(x, z, mask=mask)
         
         if self.fc is not None:
             x = self.fc(self.norm(x))
         
         return x
+    
+batch_size = 3
+inpt_len = 12
+cond_len = 3
+x_tkns = torch.randint(0, 5000, (batch_size, inpt_len))
+z = torch.randn(batch_size, cond_len, 512)
+decoder = TransformerDecoder(512, 512, depth=4, heads=8, vocab=5000, drop_attn=0.1, drop_xattn=0.2, drop_ffn=0.1)
+output = decoder(x_tkns, z)
