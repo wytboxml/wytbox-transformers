@@ -1,6 +1,7 @@
 import unittest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.testing import assert_close
 
 from transformer import TransformerBlock, TransformerEncoder, TransformerDecoder, Transformer
@@ -211,21 +212,6 @@ class TestTransformer(unittest.TestCase):
         self.assertIsInstance(self.transformer.encoder, TransformerEncoder)
         self.assertIsInstance(self.transformer.decoder, TransformerDecoder)
     
-    def test_encoder_integration(self):
-        """Test that the encoder processes tokens correctly."""
-        encoder_output = self.transformer.encoder(self.z_tkns)
-        self.assertEqual(encoder_output.shape, (self.batch_size, self.cond_len, self.d_model))
-        loss = encoder_output.sum()
-        loss.backward()
-    
-    def test_decoder_integration(self):
-        """Test that the decoder processes tokens and conditioning correctly."""
-        z = self.transformer.encoder(self.z_tkns)
-        decoder_output = self.transformer.decoder(self.x_tkns, z)
-        self.assertEqual(decoder_output.shape, (self.batch_size, self.seq_len, self.vocab_size))
-        loss = decoder_output.sum()
-        loss.backward()
-    
     def test_forward_pass(self):
         """Test the full forward pass through the transformer."""
         output = self.transformer(self.x_tkns, self.z_tkns)
@@ -289,6 +275,35 @@ class TestTransformer(unittest.TestCase):
         # Check that parameters changed
         final_params = torch.nn.utils.parameters_to_vector(self.transformer.parameters())
         self.assertFalse(torch.allclose(initial_params, final_params))
+
+    def test_overfitting(self):
+        print('Testing overfitting')
+        FAKE_X = torch.randint(0, self.vocab_size, (10, self.seq_len))
+        FAKE_Z = torch.randint(0, self.vocab_size, (10, self.cond_len))
+        model = Transformer(
+            d_model=64,
+            depth_enc=4,
+            depth_dec=4,
+            heads=4,
+            vocab=self.vocab_size,
+        )
+
+        opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        for i in range(500):
+            inp, trg = FAKE_X[:, :-1], FAKE_X[:, 1:]
+            pred = model(inp, FAKE_Z)
+
+            loss = F.cross_entropy(pred.flatten(0, 1), trg.flatten(0, 1))
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            acc = (pred.argmax(dim=-1)==trg).float().mean() * 100.
+            if i % 20 == 0:
+                print(f'[{i}/500] Acc={acc.item():.1f}% Loss={loss.item():.2f}')
+        
+        self.assertEqual(acc, 100)
 
 
 if __name__ == '__main__':
