@@ -232,6 +232,39 @@ class TestMultiHeadAttention(unittest.TestCase):
         # Output should preserve all input dimensions
         self.assertEqual(output_mhsa.shape, x_batched.shape)
         self.assertEqual(output_mhca.shape, x_batched.shape)
+
+    def test_causal_mask_single_head(self):
+        """Test that causal masking properly prevents information flow from future tokens."""
+        batch_size = 2
+        seq_len = 5
+        dim = 8
+        
+        # Create sample inputs
+        q = torch.randn(batch_size, seq_len, dim)
+        k = torch.randn(batch_size, seq_len, dim)
+        v = torch.randn(batch_size, seq_len, dim)
+        
+        # Create causal mask (lower triangular matrix)
+        # In a causal mask, position i can only attend to positions j where j <= i
+        mask = torch.tril(torch.ones(seq_len, seq_len))
+        
+        # Get attention output and weights with causal mask
+        attention = SoftmaxAttention(drop=0.0)
+        output, attn_weights = attention(q, k, v, mask=mask, return_attn=True)
+        
+        # Verify shape of outputs
+        self.assertEqual(output.shape, (batch_size, seq_len, dim))
+        self.assertEqual(attn_weights.shape, (batch_size, seq_len, seq_len))
+
+        # Verify attention weights
+        self.assertTrue(torch.allclose(attn_weights.sum(-1), torch.ones(1)))
+        
+        # Check that the upper triangular part of attention weights is zero
+        # This confirms that future tokens do not influence current token representations
+        upper_triangular = torch.triu(torch.ones_like(attn_weights), diagonal=1)
+        masked_weights = attn_weights * upper_triangular
+        self.assertTrue(torch.allclose(masked_weights, torch.zeros(1)))
+    
         
         
 if __name__ == '__main__':
