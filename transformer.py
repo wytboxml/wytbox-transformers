@@ -217,3 +217,66 @@ class TransformerDecoder(nn.Module):
             x = self.fc(self.norm(x))
         
         return x
+
+
+class Transformer(nn.Module):
+    def __init__(
+        self, 
+        d_model: int, 
+        depth_enc: int, 
+        depth_dec: int, 
+        heads: int, 
+        vocab: int = 49408, 
+        drop_attn: float = 0., 
+        drop_xattn: float = 0., 
+        drop_ffn: float = 0.
+    ) -> None:
+        """
+        Transformer takes both token inputs and a conditioning tensor,
+        allowing it to generate outputs conditioned on external information.
+        
+        Args:
+            d_model (int): Dimension of the model/embeddings
+            depth_enc (int): Number of transformer blocks for encoder
+            depth_dec (int): Number of transformer blocks for decoder
+            heads (int): Number of attention heads in each transformer block
+            vocab (int, default=49408): Vocabulary size for token embeddings.
+            drop_attn (float, default=0.): Dropout rate for self-attention.
+            drop_xattn (float, default=0.): Dropout rate for cross-attention.
+            drop_ffn (float, default=0.): Dropout rate for feed-forward networks.
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.encoder = TransformerEncoder(
+            d_model=d_model,
+            depth=depth_enc,
+            heads=heads,
+            vocab=vocab,
+            drop_attn=drop_attn,
+            drop_ffn=drop_ffn)
+        self.decoder = TransformerDecoder(
+            d_model=d_model,
+            d_cond=d_model,
+            depth=depth_dec,
+            heads=heads,
+            vocab=vocab,
+            d_out=vocab,
+            drop_attn=drop_attn,
+            drop_xattn=drop_xattn,
+            drop_ffn=drop_ffn)
+
+    def forward(self, x_tkns: torch.Tensor, z_tkns: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the transformer decoder.
+        
+        Args:
+            x_tkns (torch.Tensor): Input tensor of token indices. [batch_size, seq_len]
+            z_tkns (torch.Tensor): Conditioning tensor of token indices for cross-attention.
+                [batch_size, cond_seq_len, d_cond]
+                
+        Returns:
+            torch.Tensor: Output tensor. [batch_size, seq_len, vocab]
+        """
+        z = self.encoder(z_tkns)
+        x = self.decoder(x_tkns, z)
+        return x

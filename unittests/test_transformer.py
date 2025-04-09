@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.testing import assert_close
 
-from transformer import TransformerBlock, TransformerEncoder, TransformerDecoder
+from transformer import TransformerBlock, TransformerEncoder, TransformerDecoder, Transformer
 
 
 class TestTransformerBlock(unittest.TestCase):
@@ -116,7 +116,6 @@ class TestTransformerEncoder(unittest.TestCase):
         expected_shape = (self.batch_size, self.seq_len, self.d_out)
         self.assertEqual(output.shape, expected_shape)
 
-
 class TestTransformerDecoder(unittest.TestCase):
     def setUp(self):
         self.d_model = 64
@@ -182,6 +181,115 @@ class TestTransformerDecoder(unittest.TestCase):
         """Test error when conditioning is not provided"""
         with self.assertRaises(TypeError):
             self.decoder_no_proj(self.x_tkns)
+
+
+class TestTransformer(unittest.TestCase):
+    def setUp(self):
+        # Common test parameters
+        self.batch_size = 2
+        self.seq_len = 10
+        self.cond_len = 5
+        self.d_model = 32
+        self.vocab_size = 1000
+        
+        # Create a transformer with small dimensions for testing
+        self.transformer = Transformer(
+            d_model=self.d_model,
+            depth_enc=2,
+            depth_dec=2,
+            heads=4,
+            vocab=self.vocab_size,
+        )
+        
+        # Create sample inputs
+        self.x_tkns = torch.randint(0, self.vocab_size, (self.batch_size, self.seq_len))
+        self.z_tkns = torch.randint(0, self.vocab_size, (self.batch_size, self.cond_len))
+    
+    def test_initialization(self):
+        """Test that the transformer is initialized correctly."""
+        self.assertEqual(self.transformer.d_model, self.d_model)
+        self.assertIsInstance(self.transformer.encoder, TransformerEncoder)
+        self.assertIsInstance(self.transformer.decoder, TransformerDecoder)
+    
+    def test_encoder_integration(self):
+        """Test that the encoder processes tokens correctly."""
+        encoder_output = self.transformer.encoder(self.z_tkns)
+        self.assertEqual(encoder_output.shape, (self.batch_size, self.cond_len, self.d_model))
+        loss = encoder_output.sum()
+        loss.backward()
+    
+    def test_decoder_integration(self):
+        """Test that the decoder processes tokens and conditioning correctly."""
+        z = self.transformer.encoder(self.z_tkns)
+        decoder_output = self.transformer.decoder(self.x_tkns, z)
+        self.assertEqual(decoder_output.shape, (self.batch_size, self.seq_len, self.vocab_size))
+        loss = decoder_output.sum()
+        loss.backward()
+    
+    def test_forward_pass(self):
+        """Test the full forward pass through the transformer."""
+        output = self.transformer(self.x_tkns, self.z_tkns)
+        self.assertEqual(output.shape, (self.batch_size, self.seq_len, self.vocab_size))
+        
+        # Test that outputs are different for different inputs
+        output2 = self.transformer(
+            torch.randint(0, self.vocab_size, (self.batch_size, self.seq_len)), 
+            self.z_tkns)
+        self.assertFalse(torch.allclose(output, output2))
+    
+    def test_conditioning_effect(self):
+        """Test that different conditioning tensors produce different outputs."""
+        # Get output with original conditioning
+        output1 = self.transformer(self.x_tkns, self.z_tkns)
+        
+        # Get output with different conditioning
+        different_z = torch.randint(0, self.vocab_size, (self.batch_size, self.cond_len))
+        output2 = self.transformer(self.x_tkns, different_z)
+        
+        # Check that outputs are different (conditioning has an effect)
+        self.assertFalse(torch.allclose(output1, output2))
+    
+    def test_batch_processing(self):
+        """Test that the transformer can process multiple sequences in a batch."""
+        # Process a single item
+        single_output = self.transformer(
+            self.x_tkns[0:1], 
+            self.z_tkns[0:1]
+        )
+        
+        # Check shape
+        self.assertEqual(single_output.shape, (1, self.seq_len, self.vocab_size))
+        
+        # Process the whole batch
+        batch_output = self.transformer(self.x_tkns, self.z_tkns)
+        
+        # Check that the first item in the batch matches when processed individually
+        # (allowing for minor numerical differences)
+        self.assertTrue(torch.allclose(single_output[0], batch_output[0], atol=1e-6))
+    
+    def test_training_mode(self):
+        """Test that the model works in training mode and parameters are updated."""
+        # Get initial parameters
+        initial_params = torch.nn.utils.parameters_to_vector(self.transformer.parameters()).detach().clone()
+        
+        # Set to training mode
+        self.transformer.train()
+        
+        # Forward pass and backward
+        output = self.transformer(self.x_tkns, self.z_tkns)
+        loss = output.mean()
+        loss.backward()
+        
+        # Apply a simple optimizer step
+        with torch.no_grad():
+            for param in self.transformer.parameters():
+                if param.grad is not None:
+                    param.data.add_(param.grad, alpha=-0.01)
+        
+        # Check that parameters changed
+        final_params = torch.nn.utils.parameters_to_vector(self.transformer.parameters())
+        self.assertFalse(torch.allclose(initial_params, final_params))
+
 
 if __name__ == '__main__':
     unittest.main()
