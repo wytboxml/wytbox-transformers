@@ -217,11 +217,3 @@ class TransformerDecoder(nn.Module):
             x = self.fc(self.norm(x))
         
         return x
-    
-batch_size = 3
-inpt_len = 12
-cond_len = 3
-x_tkns = torch.randint(0, 5000, (batch_size, inpt_len))
-z = torch.randn(batch_size, cond_len, 512)
-decoder = TransformerDecoder(512, 512, depth=4, heads=8, vocab=5000, drop_attn=0.1, drop_xattn=0.2, drop_ffn=0.1)
-output = decoder(x_tkns, z)
